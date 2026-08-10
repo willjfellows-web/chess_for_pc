@@ -5,76 +5,89 @@
 // Constructors
 // ----------------------------------------------------------------------
 
-// update visibles list to match state of model.mailbox
-void reset_visibles_list(view_model* vm, int is_from_white)
+void set_clocks(view_model& vm, int min, int sec)
 {
-	vm->piece_count = 0;
-	// const int to_compliment{ ROWS - 1 };
-	int ranks_with_pieces_count{ 4 };
-	int ranks_with_pieces[] = { 0, 1, 6, 7 };
-	if (is_from_white)
-	{
-		for (int rank_id{}; rank_id < ranks_with_pieces_count; rank_id++)
-			for (int file{}; file < COLS; file++)
-			{
-				int rank = ranks_with_pieces[rank_id];
-				square_coord& new_piece = vm->visible_piece_list[vm->piece_count++];
-				new_piece.square = ROWS * rank + file;
+	vm.black.display[4] = vm.white.display[4] = sec%BASE_TEN + '0';
+	vm.black.display[3] = vm.white.display[3] = sec/BASE_TEN + '0';
 
-				// piece coord == top left corner of square
-				Vector2& coord = new_piece.coord;
-				float y = rank*vm->piece_length + vm->board_coord.y;
-				float x = file*vm->piece_length + vm->board_coord.x;
-				coord.y = vm->to_compliment_coord_y - y;
-				coord.x = x;
+	vm.black.display[1] = vm.white.display[1] = min%BASE_TEN + '0';
+	vm.black.display[0] = vm.white.display[0] = min/BASE_TEN + '0';
+	int total_secs = min*60 + sec;
+	float countdown = (float)total_secs;
+	vm.black.countdown = vm.white.countdown = countdown;
+	// view::update_timer must detect decrease in seconds as soon as game starts
+	vm.black.previous_total_seconds = vm.white.previous_total_seconds = total_secs; 
+}
 
-			}
-	}
-	else
-	{
-		for (int rank_id{}; rank_id < ranks_with_pieces_count; rank_id++)
-			for (int file{}; file < COLS; file++)
-			{
-				int rank = ranks_with_pieces[rank_id];
-				square_coord& new_piece = vm->visible_piece_list[vm->piece_count++];
-				new_piece.square = ROWS * rank + file;
 
-				// piece coord == top left corner of square
-				Vector2& coord = new_piece.coord;
-				float y = rank*vm->piece_length + vm->board_coord.y;
-				float x = file*vm->piece_length + vm->board_coord.x; 
-				coord.y = y;
-				coord.x = vm->to_compliment_coord_x - x;
-			}
-	}
-} // end reset visible piece list
-
-void view_model::new_game(int is_from_white)
+void view_model::new_game(int is_from_white, int player_minutes, int player_seconds)
 {
 	this->is_from_white = is_from_white;
 	model.reset_score_sheet();
 	model.set_defualt_board();
-	reset_visibles_list(this, is_from_white);
-}
+	set_clocks(*this, player_minutes, player_seconds);
 
-view_model::view_model(
-	std::array<Texture2D, empty> textures
-	, float piece_length
-	, int screen_width
-	, int screen_height
-	, int is_from_white) 
+	// update visibles list to match the mailbox in default setup
+	piece_count = 0;
+	int ranks_with_pieces_count{ 4 };
+	const static int ranks_with_pieces[] = { 0, 1, 6, 7 };
+	if (is_from_white)
+	{
+		white_timer_coord = &bottom_timer_coord;
+		black_timer_coord = &top_timer_coord;
+
+		for (int rank_id{}; rank_id < ranks_with_pieces_count; rank_id++)
+			for (int file{}; file < COLS; file++)
+			{
+				int rank = ranks_with_pieces[rank_id];
+				square_coord& new_piece = visible_piece_list[piece_count++];
+				new_piece.square = ROWS * rank + file;
+
+				// piece coord == top left corner of square
+				Vector2& coord = new_piece.coord;
+				float y = rank*piece_length;
+				float x = file*piece_length;
+				coord.y = to_compliment_coord_y - y;
+				coord.x = x + board_coord.x;
+			}
+	}
+	else
+	{
+		white_timer_coord = &top_timer_coord;
+		black_timer_coord = &bottom_timer_coord;
+
+		for (int rank_id{}; rank_id < ranks_with_pieces_count; rank_id++)
+			for (int file{}; file < COLS; file++)
+			{
+				int rank = ranks_with_pieces[rank_id];
+				square_coord& new_piece = visible_piece_list[piece_count++];
+				new_piece.square = ROWS * rank + file;
+
+				// piece coord == top left corner of square
+				Vector2& coord = new_piece.coord;
+				float y = rank*piece_length;
+				float x = file*piece_length; 
+				coord.y = y + board_coord.y;
+				coord.x = to_compliment_coord_x - x;
+			}
+	}
+} // end new_game
+
+view_model::view_model(std::array<Texture2D, empty> textures, float piece_length, int screen_width, int screen_height, int is_from_white) 
 	: is_from_white{ is_from_white }
 	, piece_length{ piece_length }
 	, textures{ textures }
-	, board_coord{ (float)screen_width / 32, (float)screen_height / 32, piece_length * COLS, piece_length * ROWS }
+	, board_coord{ (float)screen_width / 32, (float)110, piece_length * COLS, piece_length * ROWS }
+	, top_timer_coord{ screen_width*2/32, 110 + (110 - 100)/5 + ROWS*piece_length, 150, 80  }
+	, bottom_timer_coord{ screen_width/32 + COLS*piece_length - screen_width*2/32, (110 - 100)/5, 150, 80  }
 	// extra board coord for piece.coords already possessing a board coord during main.flip_piece() 
-	, to_compliment_coord_y { (ROWS - 1)*piece_length + board_coord.y + board_coord.y } 
-	, to_compliment_coord_x { (ROWS - 1)*piece_length + board_coord.x + board_coord.x }
+	, to_compliment_coord_y { (ROWS - 1)*piece_length + board_coord.y } 
+	, to_compliment_coord_x { (ROWS - 1)*piece_length + board_coord.x }
 {
 	// cache checkerboard as texture
 	board = LoadRenderTexture(piece_length * ROWS, piece_length * COLS);
 	draw_board_grid_texture();
-	new_game(is_from_white);
+	new_game(is_from_white, 10, 0);
 } // end set starting position constructor
 
 
