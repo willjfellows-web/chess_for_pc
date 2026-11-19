@@ -1,0 +1,131 @@
+// #include "resource_dir.h"	// utility header for SearchAndSetResourceDir
+#include "raylib.h"
+#include "load.h"
+#include "view.h"
+
+// TODO: 
+// 1. fix place reverse capture piece crash
+// 2. activate 'play' state from first move via console input
+// 3. add boardstate hash for threefold repitition
+// 4. conclude game
+// 	a) new gmae creates record, adds to model
+// 	b) end game creates new record, adds to model
+// 	c) close window saves records
+// 	d) main() loads records saved
+// 8. reverse move_capture_promote duplicates promoting piece
+
+typedef unsigned short bin_move;
+void game_to_binary(std::vector<half_move>& score_sheet)
+{
+	int one_init = 1;
+	int move_three = 6 + one_init;
+	if (score_sheet.size() <= move_three)
+		return;
+
+	int max_id_bit_count = 6;
+	const int element_1 = max_id_bit_count;
+	const int element_2 = 2*max_id_bit_count;
+
+	// we store 16bits per move
+	// 6bits = from	(value 0-63)
+	// 6bits = to	(value 0-63)
+	// 4bits = secondary_effect	(value 0-7)
+	// 	storing secondary_effect is required to distinguish promotion=queen with promotion=rook/bishop
+	//	storing captures as well as secondary_effect would be possible with remaining bits,
+	//		but not captures & promotion_xxx.
+
+	int total_half_moves = score_sheet.size() - one_init;
+	bin_move* game_binary = (bin_move*)malloc(total_half_moves*sizeof(bin_move));
+	for (int i{}; i < total_half_moves; i++)
+	{
+		bin_move& bin = game_binary[i];
+		half_move& defined = score_sheet[i + one_init];
+		bin = (bin_move)defined.from;
+		// allow off the end |' because end looks like: (elsewhere data) |= 0000;
+		bin |= (bin_move)(defined.to << element_1);
+		bin |= (bin_move)(defined.effect << element_2); 
+	}
+
+	std::vector<half_move> recreate;
+	recreate.reserve(score_sheet.size());
+	recreate.push_back(half_move());
+
+	int sqid_bit_mask = 63;
+	int second_effect_bit_mask = 7;
+	for (int i{}; i < total_half_moves; i++)
+	{
+		bin_move& bin = game_binary[i];
+		recreate.push_back(half_move());
+		half_move& defined = recreate.back();
+		defined.from = sqid_bit_mask&bin;
+		defined.to = sqid_bit_mask&(bin >> element_1);
+		defined.effect = (secondary_effect)(second_effect_bit_mask&(bin >> element_2));
+	}
+
+	for (int i{1}; i < total_half_moves; i++)
+	{
+		error(recreate[i].from, "recreate");
+		error(score_sheet[i].from, "score_sheet");
+		error(recreate[i].to, "recreate");
+		error(score_sheet[i].to, "score_sheet");
+		error(recreate[i].effect, "recreate");
+		error(score_sheet[i].effect, "score_sheet");
+	}
+}
+
+int main()
+{
+	// Tell the window to use vsync and work on high DPI displays
+	// SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
+	// Utility function from resource_dir.h to find the resources folder and set it as the current working directory so we can load from it
+	// SearchAndSetResourceDir("resources");
+
+	int screen_width = 1500;
+	int screen_height = 900;
+	InitWindow(screen_width, screen_height, "play chess"); // !ALWAYS initialize window BEFORE calling GPU
+	int square_len = 64 + 20;
+
+	std::array<Texture2D, empty> textures = load_textures(square_len);
+
+
+	session session;
+	// board, pickup pieces, and timers
+	view_model vm = view_model(session, textures, square_len, screen_width, screen_height, true);
+	departure operative{};
+
+
+	float frame_rate = 20;
+	SetTargetFPS(frame_rate);
+
+	bool quit = false;
+	while (!WindowShouldClose() && !quit)
+	{
+		session.mouse_coord = GetMousePosition();
+
+		BeginDrawing();
+		switch(session.page)
+		{
+			case seated:
+				draw_board_do_gamesetting_buttons(&vm, operative, session);
+				do_play_buttons(&vm, operative, session);
+				// state change in switch to be independent of mouse and console
+				if (vm.model.score_sheet.size() == 2) 
+					session.page = play;
+				break;
+			case play:
+				vm.decrement_timer(session);
+				draw_board_do_gamesetting_buttons(&vm, operative, session);
+				do_play_buttons(&vm, operative, session);
+				break;
+			case analysis:
+				draw_board_do_gamesetting_buttons(&vm, operative, session);
+				error("analysis");
+				game_to_binary(vm.model.score_sheet);
+				quit = true;
+				break;
+			case database:
+				break;
+		}
+		EndDrawing();
+	} // end window should close
+}

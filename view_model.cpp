@@ -1,5 +1,16 @@
 #include "view_model.h";
+#define BASE_TEN 10
+#define SECS_PER_MIN 60
 
+void error(game_record& game)
+{
+	std::cout << "opening: " << game.opening << '\n';
+	std::cout << "win: " << game.win << '\n';
+	std::cout << "result: " << game.result << '\n';
+	std::cout << "clock_total_seconds: " << game.clock_total_seconds << '\n';
+	std::cout << "mothball_begin: " << game.mothball_begin << '\n';
+	std::cout << "date: " << (int)game.year << ' ' << (int)game.month << ' ' << (int)game.day << '\n';
+}
 
 // ----------------------------------------------------------------------
 // Constructors
@@ -7,34 +18,82 @@
 
 void set_clocks(view_model& vm, int min, int sec)
 {
-	vm.black.display[4] = vm.white.display[4] = sec%BASE_TEN + '0';
-	vm.black.display[3] = vm.white.display[3] = sec/BASE_TEN + '0';
+	std::div_t second_digits = std::div(sec, BASE_TEN);
+	vm.black.display[4] = vm.white.display[4] = second_digits.rem + '0';
+	vm.black.display[3] = vm.white.display[3] = second_digits.quot + '0';
 
-	vm.black.display[1] = vm.white.display[1] = min%BASE_TEN + '0';
-	vm.black.display[0] = vm.white.display[0] = min/BASE_TEN + '0';
+	std::div_t minute_digits = std::div(min, BASE_TEN);
+	vm.black.display[1] = vm.white.display[1] = minute_digits.rem + '0';
+	vm.black.display[0] = vm.white.display[0] = minute_digits.quot + '0';
 	int total_secs = min*60 + sec;
-	float countdown = (float)total_secs;
-	vm.black.countdown = vm.white.countdown = countdown;
 	// view::update_timer must detect decrease in seconds as soon as game starts
 	vm.black.previous_total_seconds = vm.white.previous_total_seconds = total_secs; 
+	float countdown = (float)total_secs;
+	vm.black.countdown = vm.white.countdown = countdown;
 }
 
-
-void view_model::new_game(int is_from_white, int player_minutes, int player_seconds)
+void view_model::save_last_game(session& session)
 {
-	this->is_from_white = is_from_white;
-	model.reset_score_sheet();
-	model.set_defualt_board();
-	set_clocks(*this, player_minutes, player_seconds);
+	game_record* game = &session.games.back();
+	game->score_sheet.shrink_to_fit();
+	// save final position image
+	game->survivors_count = piece_count;
+	int loaded_position_size = piece_count*sizeof(piece_coord);
+	game->survivors = (piece_coord*)malloc(loaded_position_size);
 
+	// NOTE: records globals temp location
+	const Vector2 records_img_begin = { 600, 100 };
+	const float records_piece_len = 32;
+
+	for (int piece{}; piece < piece_count; piece++)
+	{
+		sq_id sq = visible_piece_list[piece].square;
+		enum piece survivor = model.get(sq);
+		game->survivors[piece].piece = survivor;
+		Vector2 coord = square_to_coord(records_img_begin, records_piece_len, this->is_from_white, sq);
+		game->survivors[piece].x = coord.x;
+		game->survivors[piece].y = coord.y;
+	}
+}
+
+void view_model::new_game(session& session, int is_from_white, int player_minutes, int player_seconds)
+{
+	int move_three = 6;
+	if (session.games.back().score_sheet.size() <= move_three)
+		// returning to play-page always creates a new game
+		session.games.pop_back();
+	else
+		save_last_game(session);
+
+	model.white_to_move = 1;
+	session.games.push_back(game_record());
+	game_record* game = &session.games.back();
+	// game->rating_black;
+	// game->rating_white;
+	// game->id_black;
+	// game->id_white;
+	// game->mothball_begin;
+	// game->opening = (opening)0;
+	game->clock_total_seconds = player_minutes*60 + player_seconds;
+	std::time_t t = std::time(0);
+	std::tm* now = std::localtime(&t);
+	game->year = now->tm_year;
+	game->month = now->tm_mon;
+	game->day =  now->tm_mday;
+
+	model.set_default_board();
+	set_clocks(*this, player_minutes, player_seconds);
+	// swap perspective for setup
+	this->is_from_white = is_from_white;
+	// swap clock display location &
 	// update visibles list to match the mailbox in default setup
 	piece_count = 0;
 	int ranks_with_pieces_count{ 4 };
 	const static int ranks_with_pieces[] = { 0, 1, 6, 7 };
 	if (is_from_white)
 	{
-		white_timer_coord = &bottom_timer_coord;
-		black_timer_coord = &top_timer_coord;
+		white_timer_coord = &top_timer_coord;
+		black_timer_coord = &bottom_timer_coord;
 
 		for (int rank_id{}; rank_id < ranks_with_pieces_count; rank_id++)
 			for (int file{}; file < COLS; file++)
@@ -53,8 +112,8 @@ void view_model::new_game(int is_from_white, int player_minutes, int player_seco
 	}
 	else
 	{
-		white_timer_coord = &top_timer_coord;
-		black_timer_coord = &bottom_timer_coord;
+		white_timer_coord = &bottom_timer_coord;
+		black_timer_coord = &top_timer_coord;
 
 		for (int rank_id{}; rank_id < ranks_with_pieces_count; rank_id++)
 			for (int file{}; file < COLS; file++)
@@ -73,30 +132,33 @@ void view_model::new_game(int is_from_white, int player_minutes, int player_seco
 	}
 } // end new_game
 
-view_model::view_model(std::array<Texture2D, empty> textures, float piece_length, int screen_width, int screen_height, int is_from_white) 
+view_model::view_model(session& session, float piece_length, int screen_width, int screen_height, int is_from_white) 
 	: is_from_white{ is_from_white }
 	, piece_length{ piece_length }
-	, textures{ textures }
 	, board_coord{ (float)screen_width / 32, (float)110, piece_length * COLS, piece_length * ROWS }
-	, top_timer_coord{ screen_width*2/32, 110 + (110 - 100)/5 + ROWS*piece_length, 150, 80  }
-	, bottom_timer_coord{ screen_width/32 + COLS*piece_length - screen_width*2/32, (110 - 100)/5, 150, 80  }
 	// extra board coord for piece.coords already possessing a board coord during main.flip_piece() 
 	, to_compliment_coord_y { (ROWS - 1)*piece_length + board_coord.y } 
 	, to_compliment_coord_x { (ROWS - 1)*piece_length + board_coord.x }
+
+	, text_size{ 40 }
+	, new_game_btn_coord { 20*screen_width/32, screen_height / 2, 200, 100 }
+	, old_game_btn_coord { 20*screen_width/32, screen_height / 2 + 300, 200, 100 }
+	, swap_sides_btn_coord { 26*screen_width/32, screen_height / 2, 120, 120 }
+	, back_move_btn_coord { 20*screen_width/32, 20*screen_height / 32, 100, 50 }
+	, console_coord{ screen_width*22/32, screen_height*10/32, 300, 50 }
+
+	, promote_ribbon{ 0, 0, piece_length, piece_length*MAX_PROMOTE_OPTION }
+
+	, top_timer_coord{ screen_width*2/32, 110 + (110 - 100)/5 + ROWS*piece_length, 150, 80  }
+	, bottom_timer_coord{ screen_width/32 + COLS*piece_length - screen_width*2/32, (110 - 100)/5, 150, 80  }
 {
-	// cache checkerboard as texture
-	board = LoadRenderTexture(piece_length * ROWS, piece_length * COLS);
-	draw_board_grid_texture();
-	new_game(is_from_white, 10, 0);
+	new_game(session, is_from_white, 10, 0);
+	// instantiate console
+	std::memset(algebraic_input.data(), ' ', sizeof(char)*(algebraic_input.size() - 1)); 
+	algebraic_input[algebraic_input.size() - 1] = '\0';
 } // end set starting position constructor
 
 
-view_model::~view_model()
-{
-	UnloadRenderTexture(board);
-	for (Texture2D& texture : textures)
-		UnloadTexture(texture);
-}
 
 
 // ----------------------------------------------------------------------
@@ -144,6 +206,7 @@ void mouse_to_square_coord(view_model& vm, Vector2 mouse_coord, square_coord& ou
 	out_sq_coord.square = rank * ROWS + file;
 }
 
+
 Vector2 square_to_coord(view_model& vm, sq_id square)
 {
 	int rank = get_rank(square);
@@ -153,6 +216,18 @@ Vector2 square_to_coord(view_model& vm, sq_id square)
 	Vector2 coord;
 	coord.x = vm.piece_length * tile.col + vm.board_coord.x;
 	coord.y = vm.piece_length * tile.row + vm.board_coord.y;
+	return coord;
+}
+
+Vector2 square_to_coord(Vector2 board_coord, float piece_length, bool is_from_white, sq_id square)
+{
+	int rank = get_rank(square);
+	int file = get_file(square);
+	tile tile = synch_board_rotation(is_from_white, rank, file);
+
+	Vector2 coord;
+	coord.x = piece_length * tile.col + board_coord.x;
+	coord.y = piece_length * tile.row + board_coord.y;
 	return coord;
 }
 
@@ -196,15 +271,14 @@ void place_castle(view_model& vm, departure& operative, square_coord& destinatio
 {
 	int king_from = operative.from;
 	int king_to = destination.square;
-	int white_to_move = vm.model.score_sheet.size() % 2;
-	piece king = (piece)(black_king + white_to_move);
+	piece king = (piece)(black_king + vm.model.white_to_move);
 	vm.model.move_piece(king, king_from, king_to);
 	// king coordinates already updated
 
 	// Rook
 	// Model
 	// beginning square of color's setup rank.
-	const unsigned black_to_move = white_to_move ^ 1;
+	const unsigned black_to_move = vm.model.white_to_move ^ 1;
 	// if white	0
 	// if black	last_row_start
 	int home_rank_start = -black_to_move & (COLS * (ROWS - 1)); 
@@ -213,7 +287,7 @@ void place_castle(view_model& vm, departure& operative, square_coord& destinatio
 	unsigned is_castle_kingside = king_to > king_from;
 	rook_from += is_castle_kingside ? h : a;
 	rook_to += is_castle_kingside ? f : d;
-	piece rook = (piece)(black_rook + white_to_move);
+	piece rook = (piece)(black_rook + vm.model.white_to_move);
 	vm.model.move_piece(rook, rook_from, rook_to);
 
 	// View coordinates
@@ -227,22 +301,21 @@ void place_reverse_castle(view_model& vm, half_move& previous)
 {
 	int king_home = previous.from;
 	int king_expel = previous.to;
-	int white_to_move = vm.model.score_sheet.size() % 2;
-	piece king = (piece)(black_king + white_to_move);
+	piece king = (piece)(black_king + vm.model.white_to_move);
 	vm.model.move_piece(king, king_expel, king_home);
 	// king coordinates already updated
 
 	// Rook
 	// Model
 	// beginning square of color's setup rank.
-	const unsigned black_to_move = white_to_move ^ 1;
+	const unsigned black_to_move = vm.model.white_to_move ^ 1;
 	int home_rank_start = black_to_move * (COLS * (ROWS - 1)); 
 	sq_id rook_home{ home_rank_start }; 
 	sq_id rook_expel{ home_rank_start };
 	unsigned is_castle_kingside = king_home > king_expel;
 	rook_home += is_castle_kingside ? a : h;
 	rook_expel += is_castle_kingside ? d : f;
-	piece rook = (piece)(black_rook + white_to_move);
+	piece rook = (piece)(black_rook + vm.model.white_to_move);
 	vm.model.move_piece(rook, rook_expel, rook_home);
 
 	// View coordinates
@@ -253,15 +326,14 @@ void place_reverse_castle(view_model& vm, half_move& previous)
 
 void place_en_passant(view_model& vm, departure& operative, square_coord& destination)
 {
-	int white_to_move = vm.model.score_sheet.size() % 2;
-	piece pawn = (piece)(black_pawn + white_to_move);
+	piece pawn = (piece)(black_pawn + vm.model.white_to_move);
 	vm.model.move_piece(pawn, operative.from, destination.square);
 	// pawn visibility coordinates already updated in player_drops_piece
 
 	// Locate ambushed pawn
 	sq_id ambushed{ destination.square };
-	int black_to_move = white_to_move ^ 1;
-	int ambushed_direction_from_dest = black_to_move - white_to_move;
+	int black_to_move = vm.model.white_to_move ^ 1;
+	int ambushed_direction_from_dest = black_to_move - vm.model.white_to_move;
 	ambushed +=  ambushed_direction_from_dest * ROWS;
 	piece color = (piece)(black_pawn + black_to_move);
 	vm.model.empty_occupied_square(color, ambushed);
@@ -273,17 +345,16 @@ void place_en_passant(view_model& vm, departure& operative, square_coord& destin
 
 void place_reverse_en_passant(view_model& vm, half_move& previous)
 {
-	int white_to_move = vm.model.score_sheet.size() % 2;
-	piece pawn = (piece)(black_pawn + white_to_move);
+	piece pawn = (piece)(black_pawn + vm.model.white_to_move);
 	vm.model.move_piece(pawn, previous.to, previous.from);
 	// pawn coordinates already updated
 
 	// Ambushed pawn
 	sq_id ambushed{ previous.to };
-	int black_to_move = white_to_move ^ 1;
+	int black_to_move = vm.model.white_to_move ^ 1;
 	// if black, ambushed = destination north one
 	// if white, ambushed = destination south one
-	ambushed += (black_to_move - white_to_move) * COLS;
+	ambushed += (black_to_move - vm.model.white_to_move) * COLS;
 	piece passer = (piece)(black_pawn + black_to_move);
 	vm.model.set_empty_square(passer, ambushed);
 
@@ -355,7 +426,7 @@ void view_model::player_drops_piece(departure& operative, square_coord& destinat
 		if (destination.square == operative.trigger_ids[sq])
 			effect = operative.trigger_effect;
 
-	int white_to_move = model.score_sheet.size()%2;
+	int white_to_move = model.white_to_move;
 
 	// promotion effects pass through here from algebraic notation
 	switch(effect)
@@ -388,18 +459,23 @@ void view_model::player_drops_piece(departure& operative, square_coord& destinat
 	}
 }
 
+// TODO: erase reverse one: reverse of any number moves === a complete reset
+
+piece get_captured() { return empty; }
+
 void place_reverse_move_capture(view_model& vm, half_move& previous)
 {
 	piece migrant = vm.model.get(previous.to);
 
-	if (previous.captured == empty)
+	piece captured = get_captured();
+	if (captured == empty)
 	{
 		vm.model.move_piece(migrant, previous.to, previous.from);
 		// view already reversed
 	}
 	else
 	{
-		vm.model.reverse_capture_piece(migrant, previous.from, previous.to, previous.captured);
+		vm.model.reverse_capture_piece(migrant, previous.from, previous.to, captured);
 		// recreate piece
 		int disgarded_index{ vm.piece_count };
 		square_coord& recycle_piece = vm.visible_piece_list[disgarded_index];
@@ -412,16 +488,16 @@ void place_reverse_move_capture(view_model& vm, half_move& previous)
 
 void place_reverse_promote(view_model& vm, half_move& previous, piece advancement)
 {
-	int white_to_move = vm.model.score_sheet.size() % 2;
-	piece pawn = (piece)(black_pawn + white_to_move);
-	if (previous.captured == empty)
+	piece pawn = (piece)(black_pawn + vm.model.white_to_move);
+	piece captured = get_captured();
+	if (captured == empty)
 	{
 		vm.model.reverse_move_promote(pawn, previous.from, previous.to, advancement);
 		// view already updated
 	}
 	else // undo capture
 	{
-		vm.model.reverse_capture_promote(pawn, previous, advancement);
+		vm.model.reverse_capture_promote(pawn, previous, advancement, captured);
 		// index of last capture
 		int disgarded_index{ vm.piece_count };  
 		square_coord& recycle_piece = vm.visible_piece_list[disgarded_index];
@@ -432,15 +508,19 @@ void place_reverse_promote(view_model& vm, half_move& previous, piece advancemen
 	}
 }
 
-void view_model::back_move(departure& operative)
+
+
+void view_model::back_move(departure& operative, session& session)
 {
-	int zero_move{ 1 };
-	if (model.score_sheet.size() == zero_move)
+	if (session.games.back().score_sheet.size() == 0)
 		return;
 
-	half_move& previous = model.score_sheet.back();
+	std::vector<half_move> score_sheet = session.games.back().score_sheet;
+	half_move& previous = score_sheet.back();
 	sq_id expel = previous.to;
-	model.score_sheet.pop_back(); // set perspective to previous player
+	score_sheet.pop_back(); 
+	// NOTE: set perspective to previous player before returning move
+	model.white_to_move ^= 1;
 
 	Vector2 return_coord = square_to_coord(*this, previous.from);
 	// migrant_piece probably dragged/dropped then placed at last index 
@@ -457,9 +537,9 @@ void view_model::back_move(departure& operative)
 		migrant_piece.coord = return_coord;
 	}
 
-	print_mailbox(model);
+	model.print_mailbox();
 
-	int white_to_move = model.score_sheet.size()%2;
+	int white_to_move = model.white_to_move;
 	switch (previous.effect)
 	{
 		case none_secondary_effect: place_reverse_move_capture(*this, previous); break;
@@ -479,7 +559,7 @@ void view_model::back_move(departure& operative)
 // Drawing
 // ----------------------------------------------------------------------
 
-void view_model::draw_board_grid_texture()
+void session::draw_board_grid_texture(int piece_length)
 {
 	BeginTextureMode(board);
 		Vector2 square;
@@ -490,8 +570,46 @@ void view_model::draw_board_grid_texture()
 				square.x = piece_length * col;
 				// GPU draws with negative height.
 				// we draw opposite color square becuase board is asymetrical
+				// ex) if black sq -> draw white sq
 				int is_black_square = row % 2 ^ col % 2; 
 				DrawTexture(textures[black_square + is_black_square], square.x, square.y, WHITE);
 			}
 	EndTextureMode();
+}
+
+
+void view_model::decrement_timer(session& session)
+{
+	struct clock& defender = model.white_to_move ? white : black; // update defender during move
+	defender.countdown -= GetFrameTime();
+	// for float -> int, assume x64bit mode with instruction >= SSE2
+	int total_seconds = (int)defender.countdown;
+	if (defender.previous_total_seconds > total_seconds)
+	{
+		defender.previous_total_seconds = total_seconds;
+		// quot[ient] = min, rem[ainder] = secs
+		std::div_t mins_secs = std::div(total_seconds, SECS_PER_MIN); 
+
+		// quot[ient] = second digit, rem[ainder] = first_digit
+		std::div_t digit_pair = std::div(mins_secs.rem, BASE_TEN); 
+		defender.display[4] = digit_pair.rem + '0';
+		defender.display[3] = digit_pair.quot + '0';
+		digit_pair = std::div(mins_secs.quot, BASE_TEN); 
+		defender.display[1] = digit_pair.rem + '0';
+		defender.display[0] = digit_pair.quot + '0';
+
+		if (defender.countdown <= 0)
+		{
+			session.page = analysis;
+			victory_state maybe_draw = model.is_time_insufficient_material();
+			session.games.back().win = maybe_draw;
+			if (maybe_draw == draw_on_time)
+				session.games.back().result = draw;
+			// opponent wins
+			else if (model.white_to_move)
+				session.games.back().result = black_win;
+			else 
+				session.games.back().result = white_win;
+		}
+	}
 }

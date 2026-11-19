@@ -6,6 +6,34 @@
 // debugging
 // ============================================================================================
 
+void print_bb(BB bitboard)
+{
+	std::cout << "board #" << bitboard << '\n';
+	int bit;
+	int bit_state;
+	for (int rank{ ROWS - 1 }; rank >= 0; rank--)
+	{
+		for (int file{ a }; file < max_file; file++)
+		{
+			bit = rank * ROWS + file;
+			bit_state = (bitboard >> bit) % 2;
+			switch (bit_state)
+			{
+			case 0: std::cout << '.'; break;
+			case 1: std::cout << '1'; break;
+			}
+			std::cout << ' ';
+		}
+		std::cout << '\n';
+	}
+}
+
+
+void print_bb(BB bitboard, const char* message)
+{
+	std::cout << message << '\n';
+	print_bb(bitboard);
+}
 
 
 void print_piece(piece piece)
@@ -29,10 +57,51 @@ void print_piece(piece piece)
 	}
 }
 
+void print_secondary_effect(secondary_effect effect)
+{
+	switch (effect)
+	{
+	case none_secondary_effect: std::cout << "none_secondary_effect"; break;
+	case castle: std::cout << "castle"; break;
+	case en_passant: std::cout << "en_passant"; break;
+	case promote_queen: std::cout << "promote_queen"; break;
+	case promote_rook: std::cout << "promote_rook"; break;
+	case promote_bishop: std::cout << "promote_bishop"; break;
+	case promote_knight:	std::cout << "promote_knight"; break;
+	}
+}
+
+void print_half_move(const half_move* move)
+{
+	std::cout << "departure: " << move->from << '\n'
+		<< "destinate: " << move->to << '\n';
+	print_secondary_effect(move->effect);
+	std::cout << '\n';
+}
+
+void error(secondary_effect effect) { print_secondary_effect(effect); }
 void error(const char* message) { std::cout << message << '\n'; }
 void error(const char* message, bool condition) { if (condition) std::cout << message << '\n'; }
 void error(piece value) { print_piece(value); std::cout << '\n'; }
 void error(piece value, const char* label) { std::cout << label << ':'; print_piece(value); std::cout << '\n'; }
+void error(BB bitboard) { print_bb(bitboard); }
+void error(BB bitboard, const char* message) { print_bb(bitboard, message); }
+void error(const half_move* move) { print_half_move(move); }
+
+void model::print_mailbox()
+{
+	for (int rank{ ROWS - 1 }; rank >= 0; rank--)
+	{
+		for (int file{}; file < COLS; file++) 
+		{
+			sq_id index = ROWS*rank + file;
+			piece piece = mailbox[index];
+			print_piece(piece);
+			std::cout << ' ';
+		}
+		std::cout << '\n';
+	}
+}
 
 void print_mailbox(model& model)
 {
@@ -42,34 +111,6 @@ void print_mailbox(model& model)
 		{
 			piece piece = model.get(file, rank);
 			print_piece(piece);
-			std::cout << ' ';
-		}
-		std::cout << '\n';
-	}
-}
-
-void print_bb(BB bitboard, const char* message)
-{
-	std::cout << message << '\n';
-	print_bb(bitboard);
-}
-
-void print_bb(BB bitboard)
-{
-	std::cout << "board #" << bitboard << '\n';
-	int bit;
-	int bit_state;
-	for (int rank{ ROWS - 1 }; rank >= 0; rank--)
-	{
-		for (int file{ a }; file < max_file; file++)
-		{
-			bit = rank * ROWS + file;
-			bit_state = (bitboard >> bit) % 2;
-			switch (bit_state)
-			{
-			case 0: std::cout << '.'; break;
-			case 1: std::cout << '1'; break;
-			}
 			std::cout << ' ';
 		}
 		std::cout << '\n';
@@ -88,7 +129,6 @@ piece model::move_capture_piece(piece piece, sq_id from, sq_id to)
 
 	// push
 	piece_by_type[piece] ^= bb_from | bb_to;
-	int white_to_move = score_sheet.size() % 2;
 	piece_by_type[black_square + white_to_move] ^= bb_from | bb_to;
 
 	// capture
@@ -120,7 +160,6 @@ void model::capture_piece(piece piece, sq_id from, sq_id to)
 
 	// defenders moves
 	piece_by_type[piece] ^= bb_from | bb_to;
-	int white_to_move = score_sheet.size() % 2;
 	piece_by_type[black_square + white_to_move] ^= bb_from | bb_to;
 
 	// capture
@@ -143,7 +182,6 @@ void model::reverse_capture_piece(piece migrant, sq_id restore, sq_id expel, enu
 
 	// defenders moves
 	piece_by_type[migrant] ^= bb_expel | bb_restore;
-	int white_to_move = score_sheet.size() % 2;
 	piece_by_type[black_square + white_to_move] ^= bb_expel | bb_restore;
 
 	// uncapture
@@ -163,7 +201,6 @@ void model::move_piece(piece piece, sq_id from, sq_id to)
 	BB from_to = (BB)1 << from | (BB)1 << to;
 
 	piece_by_type[piece] ^= from_to;
-	int white_to_move = score_sheet.size() % 2;
 	piece_by_type[black_square + white_to_move] ^= from_to;
 	piece_by_type[empty] ^= from_to;
 
@@ -171,9 +208,8 @@ void model::move_piece(piece piece, sq_id from, sq_id to)
 	mailbox[to] = piece;
 }
 
-void model::reverse_move_capture_piece(half_move& undone)
+void model::reverse_move_capture_piece(half_move& undone, piece original_occupant)
 {
-	piece original_occupant = undone.captured;
 	piece reversing = mailbox[undone.to];
 
 	BB bb_return = (BB)1 << undone.from;
@@ -181,8 +217,7 @@ void model::reverse_move_capture_piece(half_move& undone)
 
 	// reverse piece out of square
 	piece_by_type[reversing] ^= emigrate | bb_return;
-	int white_to_move_again = score_sheet.size() % 2;
-	piece_by_type[black_square + white_to_move_again] ^= emigrate | bb_return;
+	piece_by_type[black_square + white_to_move] ^= emigrate | bb_return;
 
 	// if capture == empty, replace empty
 	// else,				replace captured piece
@@ -191,7 +226,7 @@ void model::reverse_move_capture_piece(half_move& undone)
 	piece_by_type[empty] ^= bb_return;  // finish reversing piece
 
 	// if capture != empty, update opponent pieces
-	int black_to_move = white_to_move_again ^ 1;
+	int black_to_move = white_to_move ^ 1;
 	int is_not_capture = !(original_occupant == empty);
 	piece_by_type[black_square + black_to_move] |= is_not_capture*emigrate;
 
@@ -229,7 +264,6 @@ void model::move_promote(piece pawn, sq_id from, sq_id to, piece promotion)
 	piece_by_type[promotion] ^= bb_to;
 
 	BB from_to = bb_from | bb_to;
-	int white_to_move = score_sheet.size() % 2;
 	piece_by_type[black_square + white_to_move] ^= from_to;
 	piece_by_type[empty] ^= from_to;
 
@@ -244,7 +278,6 @@ void model::capture_promote(piece pawn, sq_id from, sq_id to, piece promotion)
 
 	// defenders moves
 	piece_by_type[pawn] ^= bb_from;
-	int white_to_move = score_sheet.size() % 2;
 	piece_by_type[black_square + white_to_move] ^= bb_from | bb_to;
 
 	// capture
@@ -270,7 +303,6 @@ piece model::move_capture_promote(piece pawn, sq_id from, sq_id to, piece promot
 	piece_by_type[promotion] ^= bb_to;
 
 	// update player's pieces
-	int white_to_move = score_sheet.size() % 2;
 	piece_by_type[black_square + white_to_move] ^= bb_from | bb_to;
 
 	// capture
@@ -295,7 +327,7 @@ piece model::move_capture_promote(piece pawn, sq_id from, sq_id to, piece promot
 	return captured;
 }
 
-piece model::reverse_move_capture_promote(piece pawn, sq_id reaquire, sq_id expel, piece promotion)
+piece model::reverse_move_capture_promote(piece pawn, sq_id reaquire, sq_id expel, piece promotion, piece captured)
 {
 	BB bb_reaquire = (BB)1 << reaquire;
 	BB bb_expel = (BB)1 << expel;
@@ -305,15 +337,14 @@ piece model::reverse_move_capture_promote(piece pawn, sq_id reaquire, sq_id expe
 	piece_by_type[promotion] ^= bb_expel;
 
 	// update player's pieces
-	int white_to_move = score_sheet.size() % 2;
 	piece_by_type[black_square + white_to_move] ^= bb_reaquire | bb_expel;
 
 	// capture
-	piece captured = mailbox[expel]; // WARN: error, expel info was destroyed in mailbox
+	piece broke_captured = mailbox[expel]; // WARN: error, expel info was destroyed in mailbox
 
 	// if capture == empty, occupy empty
 	// else,		remove captured_piece bit
-	piece_by_type[captured] ^= bb_expel;
+	piece_by_type[broke_captured] ^= bb_expel;
 
 	// occupy empty in anycase
 	piece_by_type[empty] &= ~bb_expel;
@@ -327,17 +358,17 @@ piece model::reverse_move_capture_promote(piece pawn, sq_id reaquire, sq_id expe
 	mailbox[reaquire] = empty;
 	mailbox[expel] = promotion;
 
-	return captured;
+	return broke_captured;
 }
 
-void model::reverse_move_promote(piece pawn, sq_id reaquire, sq_id expel, piece promotion) {
+void model::reverse_move_promote(piece pawn, sq_id reaquire, sq_id expel, piece promotion) 
+{
 
 	BB bb_reaquire = (BB)1 << reaquire;
 	BB bb_expel = (BB)1 << expel;
 
 	piece_by_type[promotion] ^= bb_expel;
 	piece_by_type[pawn] ^= bb_reaquire;
-	int white_to_move = score_sheet.size() % 2;
 	piece_by_type[black_square + white_to_move] ^= bb_reaquire | bb_expel;
 	piece_by_type[empty] ^= bb_reaquire | bb_expel;
 
@@ -345,17 +376,16 @@ void model::reverse_move_promote(piece pawn, sq_id reaquire, sq_id expel, piece 
 	mailbox[expel] = empty;
 }
 
-void model::reverse_capture_promote(piece pawn, half_move& previous, piece promotion)
+void model::reverse_capture_promote(piece pawn, half_move& previous, piece promotion, piece captured)
 {
 	BB reaquire = (BB)1 << previous.from;
 	BB expel = (BB)1 << previous.to;
 
 	piece_by_type[promotion] ^= expel;
 	piece_by_type[pawn] ^= reaquire;
-	int white_to_move = score_sheet.size() % 2;
 	piece_by_type[black_square + white_to_move] ^= reaquire | expel;
 
-	piece_by_type[previous.captured] ^= expel;
+	piece_by_type[captured] ^= expel;
 	int black_to_move = white_to_move ^ 1;
 	piece_by_type[black_square + black_to_move] ^= expel;
 
@@ -363,7 +393,7 @@ void model::reverse_capture_promote(piece pawn, half_move& previous, piece promo
 	piece_by_type[empty] ^= reaquire;
 
 	mailbox[previous.from] = pawn;
-	mailbox[previous.to] = previous.captured;
+	mailbox[previous.to] = captured;
 }
 
 BB model::get_BB(int piece_type) const { return piece_by_type[piece_type]; }
@@ -385,12 +415,30 @@ void set_white_and_black_home_rank(BB* piece_by_type, piece black_id, BB setup)
 	piece_by_type[black_square] |= piece_by_type[black_id] = setup << (COLS*(ROWS - 1));
 }
 
-// begin (inclusive), end (exclusive)
-template<typename T>
-inline void fill(T* begin, T* end, T fill) { for (; begin < end; begin++) *begin = fill; }
-
-void model::set_defualt_board() 
+void model::set_default_mailbox()
 {
+	const static std::array<piece, 64> default_board =
+		{
+			white_rook,white_knight,white_bishop,white_queen,white_king,white_bishop,white_knight,white_rook,
+			white_pawn,white_pawn,white_pawn,white_pawn,white_pawn,white_pawn,white_pawn,white_pawn,
+
+			empty,empty,empty,empty,empty,empty,empty,empty,
+			empty,empty,empty,empty,empty,empty,empty,empty,
+			empty,empty,empty,empty,empty,empty,empty,empty,
+			empty,empty,empty,empty,empty,empty,empty,empty,
+
+			black_pawn,black_pawn,black_pawn,black_pawn,black_pawn,black_pawn,black_pawn,black_pawn,
+			black_rook,black_knight,black_bishop,black_queen,black_king,black_bishop,black_knight,black_rook
+		};
+	
+	int mailbox_byte_count = default_board.size()*sizeof(piece);
+	std::memcpy(mailbox, default_board.data(), mailbox_byte_count);
+}
+
+void model::set_default_board() 
+{
+	set_default_mailbox();
+
 	// bitboard
 	const BB rank = (BB)255;
 	// instantiate pawn_color AND color
@@ -412,38 +460,11 @@ void model::set_defualt_board()
 	set_white_and_black_home_rank(piece_by_type, black_queen, queen);
 
 	piece_by_type[empty] = ~(piece_by_type[white_square] | piece_by_type[black_square]);
-
-	// mailbox
-	// pawns and empty
-	sq_id white_pieces_end = ROWS;
-	sq_id white_pawns_end = ROWS*2;
-	sq_id empty_pieces_end = ROWS*(2 + 4);
-	sq_id black_pawns_end = ROWS*(2 + 4 + 1);
-	sq_id black_pieces_end = ROWS*(2 + 4 + 1 + 1);
-	fill(mailbox + white_pieces_end, mailbox + white_pawns_end, white_pawn);
-	fill(mailbox + white_pawns_end, mailbox + empty_pieces_end, empty);
-	fill(mailbox + empty_pieces_end, mailbox + black_pawns_end, black_pawn);
-
-	// home row
-	const piece default_starting_home_row[ROWS] 
-		= { black_rook, black_knight, black_bishop, black_queen, black_king, black_bishop, black_knight, black_rook };
-	int to_white_piece = 1;
-	int to_black_homerow = COLS*(ROWS - 1);
-	for (sq_id sq{}; sq < white_pieces_end; sq++)
-	{
-		mailbox[sq + to_black_homerow] = default_starting_home_row[sq];
-		mailbox[sq] = (piece)(default_starting_home_row[sq] + to_white_piece);
-	}
 }
 
 
-void model::reset_score_sheet() 
-{
-	score_sheet = std::vector<half_move>(1, half_move());
-}
 
-
-model::model() : score_sheet{ half_move() } 
+model::model()
 {
 	// rooks
 	slide_instructions[north] = { 0x0101010101010100, [](int square_index, BB board) -> BB { return board << square_index; }, bit_scan_forward };
@@ -469,43 +490,51 @@ model::model() : score_sheet{ half_move() }
 
 // slide until first hit, return hit piece type
 // if first hit == empty, return garbage
-piece ray_trace_to_piece(sq_id square, orient orient, BB target, model& model)
+BB ray_trace_until_piece(sq_id square, orient orient, BB target, model& model)
 {
 	slide_instructions& slide = model.slide_instructions[orient];
 	BB line_from = slide.ray_trace(square, slide.tracer_board_initial);
 	BB targets = line_from & target;
 	sq_id first_hit = slide.bit_scan(targets);
-	piece hit = model.get(first_hit);
-	return hit;
+	BB line_after = slide.ray_trace(first_hit, slide.tracer_board_initial);
+	return line_from ^ line_after;
 }
 
 
 // is_ambusher_east, is_ambusher_west: always 0 or 1
-template <piece Friend_King, piece Threat_Queen, piece Threat_Rook>
 bool is_en_passant_attack_pinned(model& model, BB occupied, sq_id passer, int is_ambusher_east, int is_ambusher_west)
 {
+	int black_to_move = model.white_to_move ^ 1;
+	BB threat_rook = model.get_BB(black_rook + black_to_move);
+	BB threat_queen = model.get_BB(black_queen + black_to_move);
+	BB friend_king = model.get_BB(black_king + model.white_to_move);
+
 	// identify adjacent pawn
 	sq_id ambusher_passer_delta = is_ambusher_east - is_ambusher_west;
 	sq_id ambusher = passer + ambusher_passer_delta;
+	// is ambusher to east or west of passer
 	int west_east_delta = west - east;
 	orient ambusher_ray = (orient)(east + west_east_delta*is_ambusher_west);
 	orient passer_ray = (orient)(east + west_east_delta*is_ambusher_east);
 
-	// slide east from ambusher
-	piece first_from_ambusher = ray_trace_to_piece(ambusher, ambusher_ray, occupied, model);
-	piece first_from_passer = ray_trace_to_piece(passer, passer_ray, occupied, model);
-	bool king_found = first_from_ambusher == Friend_King || first_from_passer == Friend_King;
+	// look for pieces outside en passant pair
+	BB ray_from_ambusher = ray_trace_until_piece(ambusher, ambusher_ray, occupied, model);
+	BB ray_from_passer = ray_trace_until_piece(passer, passer_ray, occupied, model);
+print_bb(ray_from_ambusher, "ray_from_ambusher");
+print_bb(ray_from_passer, "ray_from_passer");
+	bool king_found 
+		= ray_from_ambusher & friend_king 
+		|| ray_from_passer & friend_king;
 	bool threat_found 
-		= first_from_ambusher == Threat_Queen 
-		|| first_from_ambusher == Threat_Rook 
-		|| first_from_passer == Threat_Queen 
-		|| first_from_passer == Threat_Rook; 
-	error(first_from_ambusher, "first_from_ambusher");
-	error(first_from_passer, "first_from_passer");
-	return !king_found || !threat_found;
+		= ray_from_ambusher & threat_queen 
+		|| ray_from_passer & threat_queen 
+		|| ray_from_ambusher & threat_rook 
+		|| ray_from_passer & threat_rook; 
+	error(king_found, "king_found"); 
+	error(threat_found, "threat_found");
+	return !(king_found && threat_found);
 }
 
-template <piece Friend_King, piece Threat_Queen, piece Threat_Rook>
 bool is_passer_targeted_after_double_push(model& model, BB pawns, BB occupied, sq_id passer)
 {
 	BB passing_pawn = (BB)1 << passer;
@@ -521,35 +550,43 @@ bool is_passer_targeted_after_double_push(model& model, BB pawns, BB occupied, s
 		return false;
 	case 1:
 		// would capturing passer expose our king?
-		return is_en_passant_attack_pinned<Friend_King, Threat_Queen, Threat_Rook>(model, occupied, passer, is_ambusher_east, is_ambusher_west);
+		return is_en_passant_attack_pinned(model, occupied, passer, is_ambusher_east, is_ambusher_west);
 	case 2:
 		// if pawns on both sides, capture can't reveal attack
 		return true;
 	}
 }
 
-BB get_en_passant_white(model& model, BB pawns) 
+BB get_en_passant_white(model& model, BB pawns, std::vector<half_move>& score_sheet) 
 {
-	half_move& previous_move = model.score_sheet.back();
-	sq_id passer = previous_move.to;
-	int move_distance =  previous_move.from - previous_move.to; // black moves top down
-	int double_push = ROWS*2;
-	if (model.get(passer) != black_pawn 
-		|| move_distance != double_push)
+	const int min_to_enpassant = 4;
+	if (score_sheet.size() >= min_to_enpassant)
+	{
+		half_move& previous_move = score_sheet.back();
+		sq_id passer = previous_move.to;
+		int move_distance =  previous_move.from - previous_move.to; // black moves top down
+		int double_push = ROWS*2;
+		if (model.get(passer) != black_pawn 
+			|| move_distance != double_push)
+		{
+			return 0;
+		}
+		else 
+		{
+			BB occupied = ~model.get_BB(empty);
+			BB intercept_square = (BB)1 << (passer + ROWS);
+			bool is_en_passant = is_passer_targeted_after_double_push(model, pawns, occupied, passer);
+			return intercept_square * is_en_passant;
+		}
+	}
+	else
 	{
 		return 0;
-	}
-	else 
-	{
-		BB occupied = ~model.get_BB(empty);
-		BB intercept_square = (BB)1 << (passer + ROWS);
-		bool is_en_passant = is_passer_targeted_after_double_push<white_king, black_queen, black_rook>(model, pawns, occupied, passer);
-		return intercept_square * is_en_passant;
 	}
 }
 
 
-void white_pawn_moves(departure& operative, BB occupied, model& model)
+void white_pawn_moves(departure& operative, BB occupied, model& model, std::vector<half_move>& score_sheet)
 {
 	BB& moves = operative.squares;
 	sq_id square = operative.from;
@@ -568,12 +605,11 @@ void white_pawn_moves(departure& operative, BB occupied, model& model)
 	std::array<sq_id, 3>& triggers = operative.trigger_ids;
 	int rank = get_rank(square);
 	const int candadite_queen_rank{ 6 };
-	half_move& previous_move = model.score_sheet.back();
 
-	BB en_passant_ambush = get_en_passant_white(model, pawn); 
+	BB en_passant_ambush = get_en_passant_white(model, pawn, score_sheet); 
 	if (en_passant_ambush)
 	{
-		half_move& previous_move = model.score_sheet.back();
+		half_move& previous_move = score_sheet.back();
 		triggers[operative.trigger_count++] = previous_move.to + ROWS;
 		moves |= en_passant_ambush;
 		operative.trigger_effect = en_passant;
@@ -606,27 +642,35 @@ void white_pawn_moves(departure& operative, BB occupied, model& model)
 	moves |= left_attack | right_attack;
 } // end white pawn moves
 
-BB get_en_passant_black(model& model, BB pawns) 
+BB get_en_passant_black(model& model, BB pawns, std::vector<half_move>& score_sheet) 
 {
-	half_move& previous_move = model.score_sheet.back();
-	sq_id passer = previous_move.to;
-	int move_distance =  previous_move.to - previous_move.from; // white moves bottom up
-	int double_push = ROWS*2;
-	if (model.get(passer) != white_pawn 
-		|| move_distance != double_push)
+	const int min_to_enpassant = 4;
+	if (score_sheet.size() >= min_to_enpassant)
 	{
-		return 0;
+		half_move& previous_move = score_sheet.back();
+		sq_id passer = previous_move.to;
+		int move_distance =  previous_move.to - previous_move.from; // white moves bottom up
+		int double_push = ROWS*2;
+		if (model.get(passer) != white_pawn 
+			|| move_distance != double_push)
+		{
+			return 0;
+		}
+		else
+		{
+			BB occupied = ~model.get_BB(empty);
+			BB intercept_square = (BB)1 << (passer - ROWS);
+			bool is_en_passant = is_passer_targeted_after_double_push(model, pawns, occupied, passer);
+			return intercept_square * is_en_passant;
+		}
 	}
 	else
 	{
-		BB occupied = ~model.get_BB(empty);
-		BB intercept_square = (BB)1 << (passer - ROWS);
-		bool is_en_passant = is_passer_targeted_after_double_push<black_king, white_queen, white_rook>(model, pawns, occupied, passer);
-		return intercept_square * is_en_passant;
+		return 0;
 	}
 }
 
-void black_pawn_moves(departure& operative, BB occupied, model& model)
+void black_pawn_moves(departure& operative, BB occupied, model& model, std::vector<half_move>& score_sheet)
 {
 	std::array<sq_id, 3>& triggers = operative.trigger_ids;
 	BB& moves = operative.squares;
@@ -649,10 +693,10 @@ void black_pawn_moves(departure& operative, BB occupied, model& model)
 	const int candadite_queen_rank{ 1 };
 	const int rank = get_rank(square);
 
-	BB en_passant_ambush = get_en_passant_black(model, pawn); 
+	BB en_passant_ambush = get_en_passant_black(model, pawn, score_sheet); 
 	if (en_passant_ambush)
 	{
-		half_move& previous_move = model.score_sheet.back();
+		half_move& previous_move = score_sheet.back();
 		triggers[operative.trigger_count++] = previous_move.from + ROWS;
 		moves |= en_passant_ambush;
 		operative.trigger_effect = en_passant;
@@ -684,7 +728,7 @@ void black_pawn_moves(departure& operative, BB occupied, model& model)
 	moves |= right_attack | left_attack;
 } // black pawn moves
 
-void model::white_pawn_departure_from_dest(departure& operative, sq_id dest, secondary_effect promotion)
+void model::white_pawn_departure_from_dest(departure& operative, sq_id dest, secondary_effect promotion, std::vector<half_move>& score_sheet)
 {
 	// operative.squares == potential departures
 	BB pawn_dest = (BB)1 << dest;
@@ -714,7 +758,7 @@ void model::white_pawn_departure_from_dest(departure& operative, sq_id dest, sec
 	else
 	{
 		BB pawns = piece_by_type[white_pawn];
-		BB en_passant_ambush = get_en_passant_white(*this, pawns); 
+		BB en_passant_ambush = get_en_passant_white(*this, pawns, score_sheet); 
 		if (en_passant_ambush)
 		{
 			half_move& previous_move = score_sheet.back();
@@ -727,7 +771,7 @@ void model::white_pawn_departure_from_dest(departure& operative, sq_id dest, sec
 	}
 }
 
-void model::black_pawn_departure_from_dest(departure& operative, sq_id dest, secondary_effect promotion)
+void model::black_pawn_departure_from_dest(departure& operative, sq_id dest, secondary_effect promotion, std::vector<half_move>& score_sheet)
 {
 	// operative.squares == potential departures
 	BB pawn_dest = (BB)1 << dest;
@@ -757,7 +801,7 @@ void model::black_pawn_departure_from_dest(departure& operative, sq_id dest, sec
 	else
 	{
 		BB pawns = piece_by_type[black_pawn];
-		BB en_passant_ambush = get_en_passant_black(*this, pawns); 
+		BB en_passant_ambush = get_en_passant_black(*this, pawns, score_sheet); 
 		if (en_passant_ambush)
 		{
 			operative.squares |= model::not_a_file & (dest << (ROWS + 1));
@@ -907,12 +951,11 @@ BB model::king_moves_standard(BB bb_king)
 	return bb_king;
 }
 
-void model::get_any_castle(departure& operative)
+void model::get_any_castle(departure& operative, std::vector<half_move>& score_sheet)
 {
 	BB& king_attacks = operative.squares;
 
 	// confirm conditions for castle
-	int white_to_move{ score_sheet.size() % 2 };
 	int black_to_move{ white_to_move ^ 1 };
 	int home_rank = black_to_move * (ROWS - 1) * COLS;
 	sq_id king_home_square = home_rank + e;
@@ -925,19 +968,15 @@ void model::get_any_castle(departure& operative)
 		// because ray_trace from rook -> king would require truncating the attack line after the king, 
 		// it's easier to ray_trace king -> rook and allow slide_instructions to naturally stop at board edge.
 		BB occupied = ~piece_by_type[empty];
-		BB occupied_for_all_but_king = occupied ^ piece_by_type[black_king + white_to_move];
-		BB obstacles = occupied_for_all_but_king | operative.opponent_check_evadables;
+		BB occupied_for_all_but_rook = occupied ^ piece_by_type[black_rook + white_to_move];
+		BB obstacles = occupied_for_all_but_rook | operative.opponent_check_evadables;
 		
 		// check king side vacancy
 		BB to_rook = slide_instructions[east].ray_trace(king_home_square, slide_instructions[east].tracer_board_initial);
-		// make attack line inclusive king, exclusive rook
-		to_rook >>= 1; 
 		king_side_castle = (to_rook & obstacles) == 0;
 
 		// check queen side vacancy
 		to_rook = slide_instructions[west].ray_trace(king_home_square, slide_instructions[west].tracer_board_initial);
-		// make attack line inclusive king, exclusive rook
-		to_rook <<= 1; 
 		queen_side_castle = (to_rook & obstacles) == 0;
 
 		// king or rook moved?
@@ -945,8 +984,7 @@ void model::get_any_castle(departure& operative)
 		sq_id kingside_rook = home_rank + h;
 		const sq_id our_color_king = black_king + white_to_move;
 
-		int zero_was_none_halfmove{ 1 + black_to_move };
-		for (int i{ zero_was_none_halfmove }; i < score_sheet.size(); i += 2)
+		for (int i{ black_to_move }; i < score_sheet.size(); i += 2)
 		{
 			const half_move& move = score_sheet[i];
 			if (move.from == king_home_square)
@@ -980,21 +1018,20 @@ void model::get_any_castle(departure& operative)
 	} // end castle check
 }
 
-void king_moves(departure& operative, model& model)
+void king_moves(departure& operative, model& model, std::vector<half_move>& score_sheet)
 {
 	BB& king_attacks = operative.squares;
 	king_attacks = (BB)1 << operative.from;
 
 	king_attacks = model.king_moves_standard(king_attacks);
 	king_attacks &= ~operative.opponent_check_evadables;	// don't move into check
-	model.get_any_castle(operative);
+	model.get_any_castle(operative, score_sheet);
 } // end king_moves
 
 
 // given a nonempty piece, instantiate legal moves. Piece must be of correct color-turn to move!
-void model::get_legal_moves(departure& operative)
+void model::get_legal_moves(departure& operative, std::vector<half_move>& score_sheet)
 {
-	int white_to_move = score_sheet.size() % 2;
 	int white_piece_selected = operative.piece % 2;
 	if (white_to_move != white_piece_selected)
 		return;
@@ -1007,7 +1044,7 @@ void model::get_legal_moves(departure& operative)
 	{
 	case black_king:
 	case white_king: 
-		king_moves(operative, *this);
+		king_moves(operative, *this, score_sheet);
 		checks_to_block = -1; // bitwise (1)
 		break;
 	case black_queen:
@@ -1031,10 +1068,10 @@ void model::get_legal_moves(departure& operative)
 		move_squares = knight_moves(occupied);
 		break;
 	case black_pawn:
-		black_pawn_moves(operative, occupied, *this);
+		black_pawn_moves(operative, occupied, *this, score_sheet);
 		break;
 	case white_pawn: 
-		white_pawn_moves(operative, occupied, *this);
+		white_pawn_moves(operative, occupied, *this, score_sheet);
 		break;
 	}
 
@@ -1190,8 +1227,7 @@ bool any_sliding_attacks(BB rook_q, BB bishop_q, BB empty)
 // instantiate evadables, blockables, pinned_id/threatline, pin_count, and return pinned squares
 BB aggregate_pins_and_sliding_blockables(int start, int end, model& model, BB threat_squares, departure& operative, sq_id king_sq)
 {
-	int white_to_move = model.score_sheet.size() % 2;
-	BB friendly_pieces = model.get_BB(black_square + white_to_move);
+	BB friendly_pieces = model.get_BB(black_square + model.white_to_move);
 	BB occupied = ~model.get_BB(empty);
 	BB pinned_squares{};
 	for (; start < end; start++)
@@ -1243,7 +1279,7 @@ BB aggregate_pins_and_sliding_blockables(int start, int end, model& model, BB th
 	return pinned_squares;
 } // end aggregate_pins_and_sliding_blockables
 
-BB white_pawn_blocks(model& model, BB pawns)
+BB white_pawn_blocks(model& model, BB pawns, std::vector<half_move>& score_sheet)
 {
 	// pawn push
 	BB out_pawn_moves = model.get_BB(empty) & (pawns << ROWS); 
@@ -1253,18 +1289,18 @@ BB white_pawn_blocks(model& model, BB pawns)
 	// pawn attacks
 	BB pawn_attacks = model::not_a_file & (pawns << (ROWS + 1));
 	pawn_attacks |= model::not_h_file & (pawns << (ROWS - 1));
-	BB opponent_occupancy = model.get_BB(white_square);
+	BB opponent_occupancy = model.get_BB(black_square);
 	out_pawn_moves |= pawn_attacks & opponent_occupancy;
 
 	// pawn passant
-	BB en_passant_ambush = get_en_passant_white(model, pawns); 
+	BB en_passant_ambush = get_en_passant_white(model, pawns, score_sheet); 
 	out_pawn_moves |= en_passant_ambush;
 	
 	// we don't need promotion to block check/stalemate
 	return out_pawn_moves;
 }
 
-BB black_pawn_blocks(model& model, BB pawns)
+BB black_pawn_blocks(model& model, BB pawns, std::vector<half_move>& score_sheet)
 {
 	// pawn push
 	BB out_pawn_moves = model.get_BB(empty) & (pawns >> ROWS); 
@@ -1278,7 +1314,7 @@ BB black_pawn_blocks(model& model, BB pawns)
 	out_pawn_moves |= pawn_attacks & opponent_occupancy; 
 
 	// pawn passant
-	BB en_passant_ambush = get_en_passant_black(model, pawns); 
+	BB en_passant_ambush = get_en_passant_black(model, pawns, score_sheet); 
 	out_pawn_moves |= en_passant_ambush;
 
 	// we don't need promotion to block check/stalemate
@@ -1289,7 +1325,6 @@ BB black_pawn_blocks(model& model, BB pawns)
 // return all unpinned squares
 BB model::instantiate_pins_checks(departure& operative)
 {
-	int white_to_move = score_sheet.size() % 2;
 	int black_to_move = white_to_move ^ 1; // find opposite color pieces
 
 	// sliding piece blockable checks
@@ -1375,7 +1410,7 @@ BB model::instantiate_pins_checks(departure& operative)
 
 
 // After a move, what squares contain a threat against the opponents king, and on what squares is the opponent pinned?
-victory_state model::pins_checks_checkmate_stalemate(departure& operative, sq_id to)
+victory_state model::pins_checks_checkmate_stalemate(departure& operative, sq_id to, std::vector<half_move>& score_sheet)
 {
 	// To find check:	 all attacks
 	// To find is_stalemate: all attacks, unpinned defense, pinned defense
@@ -1383,22 +1418,20 @@ victory_state model::pins_checks_checkmate_stalemate(departure& operative, sq_id
 	// don't worry about oppenent pins, all attacks are only for immediate king saftey
 	// Meanwhile we can aggreagate evadables and nonsliding blockables for get_legal_moves next turn
 
-	int white_to_move = score_sheet.size() % 2;
-	int black_to_move = white_to_move ^ 1; // find opposite color pieces
 	BB unpinned_squares = instantiate_pins_checks(operative);
 	BB& danger_squares = operative.opponent_check_evadables;
+	const BB friendly_pieces = piece_by_type[black_square + white_to_move];
+	
+	// start with king moves
+	BB illegal_king_moves = danger_squares | friendly_pieces;
+	BB defended_squares = king_moves_standard(piece_by_type[black_king + white_to_move]) & ~illegal_king_moves; 
 
 	victory_state result; 
-	const BB friendly_pieces = piece_by_type[black_square + white_to_move];
 	if (piece_by_type[black_king + white_to_move] & danger_squares) // check
 	{
 		result = checkmate;
+	
 		// average 4.9 checks per game: https://trueelo.app/stats/checks
-		// king can escape check?
-		BB defended_squares
-			= king_moves_standard(piece_by_type[black_king + white_to_move])
-			& ~(danger_squares | friendly_pieces); // legal king moves only
-
 		if (defended_squares & ~danger_squares > 0) // can evade
 		{
 			result = safe;
@@ -1423,13 +1456,13 @@ victory_state model::pins_checks_checkmate_stalemate(departure& operative, sq_id
 			else
 			{
 				// can pawns block/capture check?
-				BB pawn_moves;
 				BB pawns = piece_by_type[black_pawn + white_to_move];
 				pawns &= unpinned_squares;
+				BB pawn_moves;
 				if (white_to_move)
-					pawn_moves = white_pawn_blocks(*this, pawns);
+					pawn_moves = white_pawn_blocks(*this, pawns, score_sheet);
 				else	
-					pawn_moves = black_pawn_blocks(*this, pawns);
+					pawn_moves = black_pawn_blocks(*this, pawns, score_sheet);
 				defended_squares |= pawn_moves;
 
 				if (defended_squares & operative.opponent_check_blockables)
@@ -1445,13 +1478,9 @@ victory_state model::pins_checks_checkmate_stalemate(departure& operative, sq_id
 	{
 		result = stalemate;
 
-		// any king moves?
-		BB defended_squares
-			= king_moves_standard(piece_by_type[black_king + white_to_move])
-			& ~(danger_squares | friendly_pieces); // legal king moves only
-
 		if (defended_squares) 
 		{
+			// king moves?
 			result = safe;
 		}
 		else
@@ -1476,9 +1505,9 @@ victory_state model::pins_checks_checkmate_stalemate(departure& operative, sq_id
 				BB pawns = piece_by_type[black_pawn + white_to_move];
 				pawns &= unpinned_squares;
 				if (white_to_move)
-					defended_squares |= white_pawn_blocks(*this, pawns);
+					defended_squares |= white_pawn_blocks(*this, pawns, score_sheet);
 				else	
-					defended_squares |= black_pawn_blocks(*this, pawns);
+					defended_squares |= black_pawn_blocks(*this, pawns, score_sheet);
 
 				if (defended_squares & operative.opponent_check_blockables)
 				{
@@ -1516,11 +1545,11 @@ victory_state model::pins_checks_checkmate_stalemate(departure& operative, sq_id
 								break;
 							case black_pawn:
 								placement = (BB)1 << pinned_sq;
-								pin_leeway = black_pawn_blocks(*this, placement);
+								pin_leeway = black_pawn_blocks(*this, placement, score_sheet);
 								break;
 							case white_pawn:
 								placement = (BB)1 << pinned_sq;
-								pin_leeway = white_pawn_blocks(*this, placement);
+								pin_leeway = white_pawn_blocks(*this, placement, score_sheet);
 								break;
 						}
 
@@ -1535,3 +1564,60 @@ victory_state model::pins_checks_checkmate_stalemate(departure& operative, sq_id
 
 	return result;
 } // pins_checks_checkmate_stalemate
+
+
+victory_state model::is_time_insufficient_material()
+{
+	// defender lost on time, oppenent is victor to verify
+	int black_to_move = white_to_move^1;
+	if (piece_by_type[black_rook + black_to_move] 
+		|| piece_by_type[black_queen + black_to_move]
+		|| piece_by_type[black_pawn + black_to_move]
+	)
+	     return win_on_time;
+	// TODO: pawns win, but future should verify if pawn can MOVE later
+
+	/*
+	* draw if:
+	* nil_pieces
+	* 1[bishop | knight]
+	* 2*knight vs opponent_king + any_piece
+	*/
+	BB pieces = piece_by_type[black_bishop + black_to_move];
+	int bishop_count{};
+	while (pieces)
+	{
+		bishop_count++;
+		pieces &= pieces - 1;
+	}
+	pieces = piece_by_type[black_knight + black_to_move];
+	int knight_count{};
+	while (pieces)
+	{
+		knight_count++;
+		pieces &= pieces - 1;
+	}
+
+	if (bishop_count + knight_count <= 1)
+	{
+		return draw_on_time;
+	}
+	else if (knight_count == 2)
+	{
+		// opponent knight pair can win if defender has a piece
+		bool any_friend_piece 
+			= piece_by_type[black_queen + white_to_move]
+			|| piece_by_type[black_rook + white_to_move]
+			|| piece_by_type[black_bishop + white_to_move]
+			|| piece_by_type[black_knight + white_to_move]
+			|| piece_by_type[black_pawn + white_to_move];
+		return any_friend_piece 
+			? win_on_time 
+			: draw_on_time; 
+	}
+	else
+	{
+		// sufficient knight/bishops
+		return win_on_time;
+	}
+} // end is_time_insufficient_material
